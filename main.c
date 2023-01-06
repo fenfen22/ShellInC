@@ -17,13 +17,17 @@ What does the shell do during its loop? a simple way to handle commands is with 
 (2) Parse: Separate the command string into a program and arguments.
 (3) Excute: Run the parsed command.
 */
-#include <stdio.h>
-#include <stdlib.h>
-#include <unistd.h>
-#include <sys/types.h>
+#include <stdio.h>              //fprintf(), printf(), stderr, perror()
+#include <stdlib.h>             //malloc(), realloc(), free(), exit(), execvp(), EXIT_SUCCESS, EXIT_FAILURE
+#include <sys/wait.h>           //waitpid() and associated macros
+#include <unistd.h>             //chdir(), fork(), exec(), pid_t
+#include <string.h>             //strcmp(), strtok()
 #define LSH_RL_BUFSIZE 1024
 #define LSH_TOK_BUFSIZE 64
 #define LSH_TOK_DELIM "\t\r\n\a"
+
+//running gcc -o main main.c to compile it, and then ./main to run it on a Linux Machine
+
 /*
 function: lsh_read_line
 We don't know ahead of time how much text a user will enter in their shell, so need to start with a block, 
@@ -108,18 +112,113 @@ The parent process can continue doing other things, and it can keep tags on its 
 */
 
 int lsh_launch(char** args){
+    //pid_t data type stands for process identification and it is used to represent process ids
     pid_t pid, wpid;
     int status;
 
     pid = fork();
-    if(pid = 0){
+    if(pid == 0){
+        //children
+        if(execvp(args[0], args) == -1){        //if the exec system call returns -1 or if it returns, we know there was an error
+            perror("lsh");      //we use perror to print the system's error message, along with our program name
+        }
+        exit(EXIT_FAILURE);     //then, we exit so the shell can keep running.
+    }
+    else if (pid < 0)
+    {
+        //error forking
+        perror("lsh");  
+    }
+    else{           //fork() execute successfully
+        //parent process
+        do{
+            wpid = waitpid(pid, &status, WUNTRACED);
+        }while(!WIFEXITED(status) && !WIFSIGNALED(status));
+    }
+    return 1;
+}
 
+/*
+most commands execute by a shell are programs, but not all of them, some of them are built right into the shell.
+
+these commands could only cange the shell's operation if they were implemented within the shell proces itself.\
+
+the shell process itself needs to execute chdir(), so that its own current directory is updated, then, when it launches child processes, 
+they will inherit that directory too.
+
+Now, we are going to add some commands to the shell itself, like cd, exit and help.
+*/
+int lsh_cd(char** args);
+int lsh_help(char**args);
+int lsh_exit(char** args);      //forward declarations
+
+//an array of builtin command names
+char * builtin_str[] = {
+    "cd",
+    "help",
+    "exit"
+};
+
+//an array of their corresponding functions
+int (*builtin_func[]) (char**) = {      //it is an array of function pointers (that take array of strings and return an int)
+    &lsh_cd,
+    &lsh_help,
+    &lsh_exit
+};
+
+int lsh_num_builtis(){
+    return sizeof(builtin_str) / sizeof(char*);
+}
+
+int lsh_cd(char** args){        //implement cd
+    if(args[1] == NULL){        //if its second argument does not exist, then print an error message.
+        fprintf(stderr, "lsh: expected argument to \"cd\"\n");
+    }
+    else{
+        if(chdir(args[1]) != 0)     //call chdir(), check for errors, and returns
+            perror("lsh");
+    }
+    return 1;
+}
+
+
+//the help function prints a nice message and the names of all the buitins.
+int lsh_help(char** args){
+    int i;
+    printf("LSH\n");
+    printf("Type program names and arguments, and hit enter.\n");
+    printf("The following are built in:\n");
+
+    for(i = 0; i < lsh_num_builtis(); i++){
+        printf(" %s\n", builtin_str[i]);
     }
 
+    printf("Use the man command for information on other programs.\n");
+    return 1;
 
 }
 
+//the exit function returns 0, as a signal for the command loop to terminate.
+int lsh_exit(char** args){
+    return 0;
+}
+
+
+//this function will either launch a builtin, or a process.
 int lsh_execute(char** args){
+    int i;
+
+    if(args[0] == NULL){
+        // an empty command was entered
+        return 1;
+    }
+
+    for(i = 0; i < lsh_num_builtis(); i++){
+        if(strcmp(args[0], builtin_str[i]) == 0){ //to check if the command equals each builtin
+            return (*builtin_func[i])(args);   //if so, run it
+        }
+    }
+    return lsh_launch(args);    //if doesn't match a builtin, it calls lsh_launch() to launch the process.
 
 }
 
